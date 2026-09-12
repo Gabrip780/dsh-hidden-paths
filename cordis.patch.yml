@@ -1,0 +1,35 @@
+# Bundle patch layer for dsh-hidden-paths.
+#
+# This package declares `dsh.bundle.patch`, so installing it into a profile
+# activates it as a layer:
+#
+#   dsh plugin --profile web add dsh-hidden-paths
+#
+# Every value below is optional; the defaults are safe (nothing hidden, the
+# secret-name rules and credential redaction active).
+
+- insert:
+    - id: dsh-hidden-paths
+      name: dsh-hidden-paths
+      config:
+        # ABSOLUTE paths of folders or files to hide from the agent. A folder
+        # hides its whole subtree, its name is masked in listings, and symlinks
+        # pointing inside are resolved and denied too.
+        hiddenPaths: []
+        #   - /home/you/private
+        #   - /etc/app/master.key
+
+        # Extra basename globs to protect, e.g. "*.vault" or "prod-secrets.*".
+        extraNameRules: []
+        # Extra directory names protected wherever they appear.
+        extraDirSegments: []
+        # Exceptions for the name/dir rules. A hiddenPaths entry outranks this
+        # list, so an allow entry can never re-open a path you explicitly hid.
+        allow: []
+
+        # Layer 2: mask credential-shaped values in tool results.
+        maskResults: true
+        # Layer 2: also mask the NAME of hidden paths in results.
+        hidePathsInResults: true
+        # Add a notice line when something was hidden or redacted.
+        maskNotice: true

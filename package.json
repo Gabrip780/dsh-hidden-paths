@@ -1,0 +1,59 @@
+{
+  "name": "dsh-hidden-paths",
+  "version": "1.0.0",
+  "description": "Deny an AI agent access to .env files, credential stores, keys and any path you hide — across file tools AND shell — plus credential redaction in tool results. A DeepSeek Harness (dsh) plugin.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "test.js",
+    "README.md",
+    "CHANGELOG.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek",
+    "deepseek-harness",
+    "cordis",
+    "security",
+    "secrets",
+    "env",
+    "dotenv",
+    "credentials",
+    "redaction",
+    "agent",
+    "guard",
+    "permissions"
+  ],
+  "license": "MIT",
+  "author": "Pau Gabriele",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Gabrip780/dsh-hidden-paths.git"
+  },
+  "homepage": "https://github.com/Gabrip780/dsh-hidden-paths#readme",
+  "bugs": {
+    "url": "https://github.com/Gabrip780/dsh-hidden-paths/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node test.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
