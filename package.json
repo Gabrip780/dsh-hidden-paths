@@ -1,7 +1,7 @@
 {
   "name": "dsh-hidden-paths",
-  "version": "1.0.0",
-  "description": "Deny an AI agent access to .env files, credential stores, keys and any path you hide — across file tools AND shell — plus credential redaction in tool results. A DeepSeek Harness (dsh) plugin.",
+  "version": "1.0.1",
+  "description": "Deny an AI agent access to .env files, credential stores, keys and any path you hide — across file tools, shell commands, search selectors and run_code. A DeepSeek Harness (dsh) plugin.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {

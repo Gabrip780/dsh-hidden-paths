@@ -128,7 +128,7 @@ node test.js
 
 Zero runtime dependencies — only Node built-ins (`node:path`, `node:os`, `node:fs`). The only filesystem call is `realpathSync` on a path the guard is already deciding about: metadata, never file content. No network, no process spawning, no `eval`.
 
-`node test.js` prints a 62-case decision table plus the configuration, hidden-path, redaction, plugin-wiring and post-audit regression groups — 93 `PASS` lines in total, and it exits non-zero on any failure. The suite asserts **both** directions: what must be denied, and what must stay allowed. A guard that over-blocks is as broken as one that under-blocks.
+`node test.js` prints a 62-case decision table plus the configuration, hidden-path, redaction, plugin-wiring and post-audit regression groups — 93 `PASS` lines on a host that allows creating symlinks (the two symlink groups are **skipped**, not failed, where it does not) — and it exits non-zero on any failure. The suite asserts **both** directions: what must be denied, and what must stay allowed. A guard that over-blocks is as broken as one that under-blocks.
 
 ## How it was reviewed
 

@@ -25,6 +25,11 @@ built-ins and runs directly from `lib/index.js`.
   outside a real path or directory-listing context. Both have dedicated tests.
 - **Honest documentation.** If your change alters what the plugin can or cannot do,
   update the README's threat model in the same change. An overclaim is a bug.
+- **No literal secret-shaped strings.** A fixture that must look like a key is
+  assembled at runtime — `"AKIA" + "IOSFODNN7EXAMPLE"`, `"-----BEGIN RSA " +
+  "PRIVATE KEY-----"` — never written as one literal. A literal one trips GitHub
+  secret scanning: a false positive that still raises a real alert and, under push
+  protection, can block a push. See the `fake` table in `test.js`.
 - **No new dependencies.** The plugin is deliberately dependency-free, and the only
   filesystem call is `realpathSync` on a path the guard is already deciding about.
   A change that reads file content, opens sockets, or spawns processes will be

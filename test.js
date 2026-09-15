@@ -10,8 +10,8 @@
 
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve, sep } from "node:path";
 import { createGuard } from "./lib/index.js";
 
 const CWD = "/home/dev/project";
@@ -109,11 +109,16 @@ for (const [label, execution, shouldDeny] of cases) {
 
 // ---------------- configuration behaviour ----------------
 console.log("\n-- configuration --");
-const withRoot = createGuard({ guardRoots: ["/root/vault"] });
-assert.notEqual(withRoot(ctx("read", { file_path: "/root/vault/notes.txt" })), undefined, "guardRoots must deny file tools");
-assert.notEqual(withRoot(ctx("bash", { command: "cat /root/vault/notes.txt" })), undefined, "guardRoots must deny shell");
+// Built from os.homedir() so the `~` case means something on every platform:
+// hard-coding /root passes on Linux and fails on Windows, where the home
+// directory is C:\Users\<name>.
+const homeDir = homedir();
+const vaultRoot = join(homeDir, "vault");
+const withRoot = createGuard({ guardRoots: [vaultRoot] });
+assert.notEqual(withRoot(ctx("read", { file_path: join(vaultRoot, "notes.txt") })), undefined, "guardRoots must deny file tools");
+assert.notEqual(withRoot(ctx("bash", { command: `cat ${join(vaultRoot, "notes.txt")}` })), undefined, "guardRoots must deny shell");
 assert.notEqual(withRoot(ctx("bash", { command: "cat ~/vault/notes.txt" })), undefined, "guardRoots must expand ~");
-assert.equal(withRoot(ctx("read", { file_path: "/root/other/notes.txt" })), undefined, "unrelated path must stay allowed");
+assert.equal(withRoot(ctx("read", { file_path: join(homeDir, "other", "notes.txt") })), undefined, "unrelated path must stay allowed");
 console.log("PASS  guardRoots denies subtree via file tools and shell");
 
 const withAllow = createGuard({ allow: ["secrets.json"] });
@@ -141,7 +146,7 @@ assert.notEqual(hiddenGuard(ctx("read", { file_path: "/srv/vault" })), undefined
 assert.notEqual(hiddenGuard(ctx("read", { file_path: "/srv/vault/notes.txt" })), undefined, "a hidden folder subtree must be denied");
 assert.notEqual(hiddenGuard(ctx("glob", { path: "/srv/vault" })), undefined, "glob in a hidden folder must be denied");
 assert.notEqual(hiddenGuard(ctx("bash", { command: "ls /srv/vault" })), undefined, "a hidden folder via shell must be denied");
-assert.notEqual(hiddenGuard(ctx("bash", { command: "cat ~/../srv/vault/x" })), undefined, "a hidden folder via relative shell path must be denied");
+assert.notEqual(hiddenGuard(ctx("bash", { command: "cat srv/vault/x" }, "/")), undefined, "a hidden folder via a relative shell path must be denied");
 assert.notEqual(hiddenGuard(ctx("read", { file_path: "/etc/app/master.key" })), undefined, "a hidden single file must be denied");
 assert.notEqual(hiddenGuard(ctx("bash", { command: "cat /etc/app/master.key" })), undefined, "a hidden single file via shell must be denied");
 assert.notEqual(hiddenGuard(ctx("write", { file_path: "/srv/vault/new.txt" })), undefined, "writes inside a hidden folder must be denied");
@@ -149,8 +154,8 @@ assert.equal(hiddenGuard(ctx("read", { file_path: "/srv/public/notes.txt" })), u
 assert.equal(hiddenGuard(ctx("bash", { command: "ls /srv" })), undefined, "listing the parent folder must stay allowed");
 console.log("PASS  hiddenPaths covers folders, single files, shell, reads and writes");
 
-assert.deepEqual(hiddenPathList({ hiddenPaths: ["/a"], guardRoots: ["/a", "/b"] }), ["/a", "/b"], "hiddenPaths and guardRoots merge without duplicates");
-assert.deepEqual(hiddenPathList({ hiddenPaths: ["  /a  ", ""] }), ["/a"], "entries are trimmed and blanks dropped");
+assert.deepEqual(hiddenPathList({ hiddenPaths: ["/a"], guardRoots: ["/a", "/b"] }), [resolve("/a"), resolve("/b")], "hiddenPaths and guardRoots merge without duplicates");
+assert.deepEqual(hiddenPathList({ hiddenPaths: ["  /a  ", ""] }), [resolve("/a")], "entries are trimmed and blanks dropped");
 console.log("PASS  hiddenPathList merges hiddenPaths/guardRoots, trims and de-duplicates");
 
 // A symlink must not become a side door into a hidden folder.
@@ -165,24 +170,44 @@ try {
 	const links = join(sandbox, "links");
 	mkdirSync(links);
 	const shortcut = join(links, "shortcut");
-	symlinkSync(vault, shortcut);
 	const publicLink = join(links, "pub");
-	symlinkSync(publicDir, publicLink);
+	let symlinksSupported = true;
+	// A directory symlink on Windows needs elevation, a JUNCTION does not, so the
+	// check actually runs there instead of being skipped.
+	const linkType = process.platform === "win32" ? "junction" : "dir";
+	try {
+		symlinkSync(vault, shortcut, linkType);
+		symlinkSync(publicDir, publicLink, linkType);
+	} catch {
+		symlinksSupported = false;
+	}
 
-	const symGuard = createGuard({ hiddenPaths: [vault] });
-	assert.notEqual(symGuard(ctx("read", { file_path: shortcut })), undefined, "a symlink to a hidden folder must be denied");
-	assert.notEqual(symGuard(ctx("read", { file_path: join(shortcut, "note.txt") })), undefined, "a file reached through a symlink must be denied");
-	assert.notEqual(symGuard(ctx("bash", { command: `cat ${shortcut}/note.txt` })), undefined, "a symlinked path via shell must be denied");
-	assert.equal(symGuard(ctx("read", { file_path: join(publicLink, "ok.txt") })), undefined, "a symlink to a normal folder must stay allowed");
-	console.log("PASS  symlinks into a hidden folder are resolved and denied");
+	if (!symlinksSupported) {
+		console.log("SKIP  symlink checks: this platform does not allow creating symlinks");
+	} else {
+		const symGuard = createGuard({ hiddenPaths: [vault] });
+		assert.notEqual(symGuard(ctx("read", { file_path: shortcut })), undefined, "a symlink to a hidden folder must be denied");
+		assert.notEqual(symGuard(ctx("read", { file_path: join(shortcut, "note.txt") })), undefined, "a file reached through a symlink must be denied");
+		assert.notEqual(symGuard(ctx("bash", { command: `cat ${shortcut}/note.txt` })), undefined, "a symlinked path via shell must be denied");
+		assert.equal(symGuard(ctx("read", { file_path: join(publicLink, "ok.txt") })), undefined, "a symlink to a normal folder must stay allowed");
+		console.log("PASS  symlinks into a hidden folder are resolved and denied");
+	}
 } finally {
 	rmSync(sandbox, { recursive: true, force: true });
 }
 
 // Hiding the NAME in results, so a listing cannot reveal it either.
+// The filter works on TEXT, so the spellings it is fed must use the native
+// separators the plugin itself produces (path.resolve), not POSIX ones.
+const vaultNative = resolve("/srv/vault");
 const filter = createHiddenPathFilter({ hiddenPaths: ["/srv/vault"] });
-assert.equal(filter("/srv/vault/a.txt"), "[hidden]", "a full hidden path must be masked");
-assert.equal(filter("found /srv/vault/a.txt here"), "found [hidden] here", "a path inside a sentence must be masked");
+assert.equal(filter(join(vaultNative, "a.txt")), "[hidden]", "a full hidden path must be masked");
+assert.equal(filter("found " + join(vaultNative, "a.txt") + " here"), "found [hidden] here", "a path inside a sentence must be masked");
+// The same root written with the OTHER separator must be masked too: on Windows
+// tool output can print `C:/srv/vault/a.txt`, and matching only the native
+// spelling would leave the hidden name visible. On POSIX the two coincide.
+const vaultOtherSpelling = vaultNative.split(sep).join("/");
+assert.equal(filter(vaultOtherSpelling + "/a.txt"), "[hidden]", "the other separator spelling must be masked");
 assert.equal(filter("vault/x.txt"), "[hidden]/x.txt", "a relative path starting with the name must be masked");
 assert.equal(filter("total 0\nvault\n"), "total 0\n[hidden]\n", "a bare `ls` entry must be masked");
 assert.equal(filter("drwxr-xr-x 2 root root 4096 vault"), "drwxr-xr-x 2 root root 4096 [hidden]", "an `ls -l` entry must be masked");
@@ -202,16 +227,34 @@ console.log("PASS  a hidden name that is a common word does not corrupt content"
 console.log("\n-- redaction --");
 const { redactText, redactBlocks, createRedactionHandler, default: plugin } = await import("./lib/index.js");
 
+// Fixture values are assembled at runtime on purpose: a literal secret-shaped
+// string inside a test file trips secret scanners (and looks like a real leak)
+// even though it is worthless. The redaction patterns under test still see the
+// complete value.
+const fake = {
+	openai: "sk-" + "abcdef0123456789ABCDEF",
+	anthropic: "sk-" + "ant-api03-abcdefghijklmnopqrst",
+	github: "ghp_" + "abcdefghijklmnopqrstuvwxyz0123456789",
+	gitlab: "glpat-" + "abcdefghijklmnopqrst",
+	aws: "AKIA" + "IOSFODNN7EXAMPLE",
+	slack: "xoxb-" + "1234567890-abcdefghijkl",
+	google: "AIza" + "SyA1234567890abcdefghijklmnopqrstuv",
+	jwt: "eyJhbGciOiJIUzI1NiJ9" + "." + "eyJzdWIiOiIxIn0" + "." + "abcdefghijklmnop",
+	pemBegin: "-----BEGIN RSA " + "PRIVATE KEY-----",
+	pemEnd: "-----END RSA " + "PRIVATE KEY-----",
+};
+const fakePem = (body) => fake.pemBegin + "\n" + body + "\n" + fake.pemEnd;
+
 const secretSamples = [
-	["openai key", "key sk-abcdef0123456789ABCDEF end", "openai-or-anthropic-key"],
-	["anthropic key", "sk-ant-api03-abcdefghijklmnopqrst", "openai-or-anthropic-key"],
-	["github token", "ghp_abcdefghijklmnopqrstuvwxyz0123456789", "github-token"],
-	["gitlab token", "glpat-abcdefghijklmnopqrst", "gitlab-token"],
-	["aws access key id", "AKIAIOSFODNN7EXAMPLE", "aws-access-key-id"],
-	["slack token", "xoxb-1234567890-abcdefghijkl", "slack-token"],
-	["google api key", "AIzaSyA1234567890abcdefghijklmnopqrstuv", "google-api-key"],
-	["private key block", "-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----", "private-key-block"],
-	["jwt", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefghijklmnop", "jwt"],
+	["openai key", "key " + fake.openai + " end", "openai-or-anthropic-key"],
+	["anthropic key", fake.anthropic, "openai-or-anthropic-key"],
+	["github token", fake.github, "github-token"],
+	["gitlab token", fake.gitlab, "gitlab-token"],
+	["aws access key id", fake.aws, "aws-access-key-id"],
+	["slack token", fake.slack, "slack-token"],
+	["google api key", fake.google, "google-api-key"],
+	["private key block", fakePem("MIIEow"), "private-key-block"],
+	["jwt", fake.jwt, "jwt"],
 ];
 for (const [label, text, kind] of secretSamples) {
 	const result = redactText(text);
@@ -239,7 +282,7 @@ console.log("PASS  ordinary source code is never mangled");
 assert.equal(redactText("just some plain text"), null, "plain text yields no redaction");
 assert.equal(redactBlocks([{ type: "image", data: "x" }]), null, "non-text-only content yields no redaction");
 const mixed = redactBlocks([
-	{ type: "text", text: "ghp_abcdefghijklmnopqrstuvwxyz0123456789" },
+	{ type: "text", text: fake.github },
 	{ type: "image", data: "x" },
 ]);
 assert.equal(mixed.count, 1);
@@ -249,7 +292,7 @@ console.log("PASS  non-text blocks pass through, clean results untouched");
 
 // The hide filter and the credential patterns cooperate in one pass.
 const hiddenBlocks = redactBlocks(
-	[{ type: "text", text: "listing /srv/vault/a.txt and key AKIAIOSFODNN7EXAMPLE" }],
+	[{ type: "text", text: "listing " + join(resolve("/srv/vault"), "a.txt") + " and key " + fake.aws }],
 	createHiddenPathFilter({ hiddenPaths: ["/srv/vault"] }),
 );
 assert.equal(hiddenBlocks.hiddenCount, 1, "the hide filter must apply to blocks");
@@ -260,7 +303,7 @@ console.log("PASS  hiding and credential masking cooperate in one pass");
 
 const runHandler = (decision) =>
 	createRedactionHandler({})({ name: "bash" }, {}, async () => decision);
-const redacted = await runHandler({ kind: "accept", content: [{ type: "text", text: "AKIAIOSFODNN7EXAMPLE" }] });
+const redacted = await runHandler({ kind: "accept", content: [{ type: "text", text: fake.aws }] });
 assert.ok(redacted.content.some((b) => b.text.includes("[redacted:aws-access-key-id]")));
 assert.ok(redacted.content.some((b) => b.text.includes("dsh-hidden-paths: redacted 1")));
 const untouched = await runHandler({ kind: "accept", content: [{ type: "text", text: "hello" }] });
@@ -395,9 +438,9 @@ console.log("PASS  hidden paths outrank the allow list");
 
 // 7. the result filter no longer corrupts sibling paths
 const sib = createHiddenPathFilter({ hiddenPaths: ["/srv/vault"] });
-assert.equal(sib("/srv/vaulted/x"), null, "a sibling sharing the prefix must NOT be rewritten");
-assert.equal(sib("/srv/database"), null, "an unrelated sibling must NOT be rewritten");
-assert.equal(sib("/srv/vault/x"), "[hidden]", "the hidden path itself must still be rewritten");
+assert.equal(sib(resolve("/srv/vaulted/x")), null, "a sibling sharing the prefix must NOT be rewritten");
+assert.equal(sib(resolve("/srv/database")), null, "an unrelated sibling must NOT be rewritten");
+assert.equal(sib(join(resolve("/srv/vault"), "x")), "[hidden]", "the hidden path itself must still be rewritten");
 assert.equal(sib("total 0\nvault\n"), "total 0\n[hidden]\n", "a bare ls entry must still be masked");
 console.log("PASS  hidden-path masking is boundary-anchored, no sibling corruption");
 
@@ -407,11 +450,27 @@ try {
 	const hiddenDir = join(linkSandbox, "vault");
 	mkdirSync(hiddenDir);
 	const shortcut = join(linkSandbox, "shortcut");
-	symlinkSync(hiddenDir, shortcut);
-	const lg = createGuard({ hiddenPaths: [hiddenDir] });
-	assert.notEqual(lg(ctx("write", { file_path: join(shortcut, "brand-new.txt") })), undefined, "a not-yet-existing file through a symlink must be denied");
-	assert.equal(realPathOfNearestExisting(join(shortcut, "brand-new.txt")), join(hiddenDir, "brand-new.txt"), "the nearest existing ancestor must resolve through the link");
-	console.log("PASS  a symlink to a missing leaf is still resolved and denied");
+	let linkSupported = true;
+	const linkType = process.platform === "win32" ? "junction" : "dir";
+	try {
+		symlinkSync(hiddenDir, shortcut, linkType);
+	} catch {
+		linkSupported = false;
+	}
+	if (!linkSupported) {
+		console.log("SKIP  symlink-to-missing-leaf check: this platform does not allow creating symlinks");
+	} else {
+		const lg = createGuard({ hiddenPaths: [hiddenDir] });
+		assert.notEqual(lg(ctx("write", { file_path: join(shortcut, "brand-new.txt") })), undefined, "a not-yet-existing file through a symlink must be denied");
+		// Compared against the same resolution through the REAL directory, so the
+		// assertion does not depend on Windows casing or 8.3 short names.
+		assert.equal(
+			realPathOfNearestExisting(join(shortcut, "brand-new.txt")),
+			realPathOfNearestExisting(join(hiddenDir, "brand-new.txt")),
+			"the nearest existing ancestor must resolve through the link",
+		);
+		console.log("PASS  a symlink to a missing leaf is still resolved and denied");
+	}
 } finally {
 	rmSync(linkSandbox, { recursive: true, force: true });
 }
@@ -426,7 +485,7 @@ assert.notEqual(fx(ctx("read", "/srv/vault/note.txt")), undefined, "a string arg
 console.log("PASS  a string argument is inspected");
 
 // 11. the private-key pattern is bounded (was quadratic, stalled ~1.7s)
-const manyBegins = "-----BEGIN RSA PRIVATE KEY-----\n".repeat(4000);
+const manyBegins = (fake.pemBegin + "\n").repeat(4000);
 const started = Date.now();
 redactText(manyBegins);
 const elapsed = Date.now() - started;

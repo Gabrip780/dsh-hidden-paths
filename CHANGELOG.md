@@ -4,6 +4,45 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] — 2026-09-15
+
+### Changed
+
+- Description aligned with the repository and the README: the plugin also covers the
+  search selectors (`glob`/`grep` patterns, `include`, `exclude`) and code executed
+  through `run_code`, not only file tools and shell commands.
+
+### Fixed
+
+- **Windows paths in shell commands were not protected.** `normalizeShellText` strips
+  backslashes — correct for POSIX escaping, and needed to catch `.en\v` — but on
+  Windows the backslash is the path separator, so `cat C:\Users\me\vault\f` collapsed
+  into `C:Usersmevaultf` and was never recognised as a path. A second pass now keeps
+  backslashes, so a Windows path stays one token; the stripping pass is unchanged.
+- **POSIX-style absolute spellings on Windows.** `resolveCandidate` normalised
+  `/srv/vault` into a drive-less `\srv\vault`, which could never match a configured
+  root resolved as `C:\srv\vault`. Both sides are now resolved with `path.resolve`,
+  so the spellings agree.
+- **The filesystem-root warning never fired on Windows.** The check compared against
+  `path.sep`, so `hiddenPaths: ["/"]` (which resolves to `C:\`) raised no warning;
+  the root is now detected with `path.parse(p).root === p`.
+- The test suite assumed a POSIX host and **failed on Windows**: it hard-coded `/root`
+  as the home directory, compared raw filter text against native-separator paths, and
+  created symlinks without allowing for platforms that forbid it. It now builds paths
+  from `os.homedir()` and `resolve`, and creates a **junction** on Windows — which
+  needs no elevation — falling back to a skip only where the platform still refuses.
+- A hidden root is now masked in **both separator spellings**, so a Windows path
+  printed as `C:/srv/vault/a.txt` no longer leaves the hidden name visible.
+
+### Security
+
+- The credential-shaped values used as test fixtures are now **assembled at runtime**
+  instead of appearing as literals. A literal string with the shape of a key (`AIza…`,
+  `ghp_…`, `AKIA…`, PEM blocks) trips GitHub secret scanning: a false positive, but a
+  real alert, and under push protection it can block a push. No key was ever real and
+  nothing needed revoking. The redaction tests are unchanged and still exercise every
+  pattern.
+
 ## [1.0.0] — 2026-09-12
 
 First public release.
@@ -69,4 +108,5 @@ A verification round over the fixes above found more, all fixed and covered:
 - `hiddenPaths` entries containing a glob now warn instead of silently protecting
   nothing, and respellings of the filesystem root (`//`, `/./`) are detected.
 
+[1.0.1]: https://github.com/Gabrip780/dsh-hidden-paths/releases/tag/v1.0.1
 [1.0.0]: https://github.com/Gabrip780/dsh-hidden-paths/releases/tag/v1.0.0
